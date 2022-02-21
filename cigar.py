@@ -1,115 +1,94 @@
-"""
-Input:File (SAM file with template)
-Output:File (SAM file with Cigar string instead of template)
-
-Functions:
-    file handeling
-        Parse Template string and NEAT string
-    ALign using BLAST
-    create CIGAR string using alignment, and insert in SAM file
-"""
-#import pysam
-#import io
 import sys
-from Bio.Blast.Applications import NcbiblastnCommandline
-from Bio.Blast.Applications import NcbimakeblastdbCommandline
-#import subprocess
-import io
-import pathlib
-
 from Bio.Seq import Seq 
 from Bio import pairwise2
+from Bio.pairwise2 import align, format_alignment
 
-
-# WorkDirectory = pathlib.Path().resolve() #where the sequence files will be saved
-# #Can be made to take in path from gen_reads
 
 templates = [] #list to olds files containing sequences from the template
 NEATs = [] #list to hold files containing sequences from the NEAT reads
-alignments = []#list to holds alignment results
-# fileCntr = 1
-
-# def makeFastqFiles(textInput, name, counter):
-#     """
-#     Writes sequence into FASTSQ file and adds it to a list
-#     param: textInput: sequnece
-#     retun: fastq file
-#     """
-#     # f = io.StringIO(">seq" "\n" + textInput + "\n")
-#     f = open(name + str(counter) + ".fastq", 'w+')
-#     f.write(">" + name + str(counter) + "\n" + textInput + "\n")
-#     f.seek(0)
-#     return f
-
-def BLAST(counter):
-    """
-    This will take in two files, each containg a single sequence and run them through the blastn command and then insert the alignment into alignments[]
-    param: counter, keeps track of which pair of template and NEAT sequence to BLAST
-    """
-
-    db = NcbimakeblastdbCommandline(dbtype="nucl", input_file = str(WorkDirectory) + "/template" + str(counter) + ".fastq")
-    db()
-    
-    alignmentCommand = NcbiblastnCommandline(query = str(WorkDirectory) + "/template" + str(counter) + ".fastq", 
-                    subject = str(WorkDirectory) + "/NEAT" + str(counter) + ".fastq", outfmt = 17)
-    #print(alignmentCommand) --> blastn -outfmt 1 -query seq1 -subject seq2
-    # subprocess.run(alignmentCommand, shell=True)
-    alignments.append(alignmentCommand())
+cigars = []
 
 def alginSeqs():
     """
-    
+    This function uses pairwise2 to locally align the NEAT sequence to the template sequence.
+    Calls the makeCigar function after each alignment.
     """
-    NeatIndex = 0
-    for seq in templates:
-        alignments.append(pairwise2.align.localms(seq, NEATs[NeatIndex], match=2, mismatch=-1, open=-.5, extend=-.1))
-        
+    for tmplt, neat in zip(templates, NEATs):
+        test = pairwise2.align.localms(tmplt, neat, match=2, mismatch=-1, open=-.5, extend=-.1)
+        alignment = format_alignment(*test[0]).split()
+        makeCigar(alignment)
 
-def insertCigar(f, alignments):
+def makeCigar(alignment):
     """
-    Replaces the template sequence with a cigar string
-    param: f: sam file, alignments: list with the alignments from 
-    return: sam file
+    Iterate through the alignment and counts the number of matches(including mismatches), deletions, and insertions. Formatted into a cigar string.
+    Calls inserCigar to input the cigar string to its respective location in the samfile.
+    param: alignment: the alignment of two sequences, index: keeps track of which sequences are being aligned
     """
+    templateSeq = alignment[1]
+    NEATSeq = alignment[-2]
+    cigCount = ''
+    currChar = ''
+    cigString = ''
+    for char in range(0, len(NEATSeq)):
+        if templateSeq[char] == '-': #insertion
+            if currChar == 'I': #more insertions
+                cigCount = cigCount + 1
+            else:# new insertion    
+                cigString = cigString + str(cigCount) + currChar
+                currChar = 'I'
+                cigCount = 1
+
+        elif NEATSeq[char] == '-': #deletion
+            if currChar == 'D': #more deletions
+                cigCount = cigCount + 1
+            else:# new deletion
+                cigString = cigString + str(cigCount) + currChar
+                currChar = 'D'
+                cigCount = 1
+
+        else: #match
+            if currChar == 'M': #more matches
+                cigCount = cigCount + 1
+            else:# new match
+                cigString = cigString + str(cigCount) + currChar
+                currChar = 'M'
+                cigCount = 1
+
+    cigString = cigString + str(cigCount) + currChar    
+    cigars.append(cigString)
 
 
-#make into 2 functions
+def insertCigar():#made for a file input
+    """
+    Replaces the template sequence with a cigar string in a new file called "output.tsam"
+    """
+    i = 0
+    try:
+        with open("output.tsam", 'w') as output:
+            with open (filename , 'r') as samFile:
+                for line in samFile:
+                    templateSeq = line.split('\t')[5]
+                    output.write(line.replace(templateSeq, cigars[i], 1))
+                    i = i+1
+    except (FileNotFoundError, IOError):
+        print("Wrong file or file path")
+    finally:
+        samFile.close()
+
+
 filename = sys.argv[1] #Takes file as command line input (testing purposes)
 #This can be changed to take a file from gen_reads.py
 try:
     with open (filename , 'r') as samFile:
         for line in samFile:
             templateSeq = line.split('\t')[5]
-            #templates.append(makeFastqFiles(templateSeq, "template",fileCntr))
             templates.append(Seq(templateSeq))
 
             NEATSeq = line.split('\t')[9]
-            #NEATs.append(makeFastqFiles(NEATSeq, "NEAT", fileCntr))
             NEATs.append(Seq(NEATSeq))
-
-            # BLAST(fileCntr)
-            # fileCntr += 1
-
+    alginSeqs()        
 except (FileNotFoundError, IOError):
     print("Wrong file or file path")
 finally:
-    samFile.close()    
-
-
-#path to current working directory
-
-#f = pysam.AlignmentFile(filename, "rb")
-    #ValueError: file does not contain alignment data (temp_1.sam)
-
-
-# Open the sam file
-#     f = open(filename, 'rb')
-#     i = 0
-#     for line in f:
-#         line = line.split()
-#         i+=1
-#         print(i)
-#         if i == 5:
-#             templates.append(line)
-#         elif i==9:
-#             SEQs.append(line)
+    samFile.close()
+insertCigar()
