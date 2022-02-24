@@ -1,3 +1,5 @@
+#!/bin/bash/python
+
 import pathlib
 import gzip
 from timeit import default_timer as timer
