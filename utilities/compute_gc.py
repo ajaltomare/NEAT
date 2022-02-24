@@ -6,7 +6,7 @@
 #   Takes output file from bedtools genomecov to generate GC/coverage model
 #
 #   Usage: bedtools genomecov -d -ibam input.bam -g reference.fa > genomeCov.dat
-#          python compute_gc.py -r reference.fa -i genomeCov.dat -w [sliding window length] -o output_name
+#          python compute_gc.py -r reference.fa -i genomeCov.dat -w [sliding window length] -o output_name.p
 #
 #
 # Updated to Python 3 standards
@@ -16,7 +16,6 @@ import argparse
 import numpy as np
 import pickle
 from Bio import SeqIO
-import gzip
 
 
 def process_fasta(file: str) -> dict:
@@ -153,7 +152,7 @@ def main():
         y_out.append(gc_bins[k])
 
     print('saving model...')
-    pickle.dump([range(window_size + 1), y_out], gzip.open(out_p + ".pickle.gz", 'wb'))
+    pickle.dump([range(window_size + 1), y_out], open(out_p, 'wb'))
 
     print(time.time() - tt, '(sec)')
 
