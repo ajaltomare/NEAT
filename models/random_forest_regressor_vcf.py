@@ -1,4 +1,4 @@
-# 2/11/22
+# 2/28/22
 
 import io
 import os
@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import RepeatedKFold
@@ -26,22 +28,36 @@ def read_vcf(path):
     ).rename(columns={'#CHROM': 'CHROM'})
 
 H1N1_vcf = read_vcf('/Users/keshavgandhi/Downloads/trio.2010_06.ychr.sites.vcf')
-# H1N1_vcf = read_vcf('/Users/keshavgandhi/Downloads/H1N1.vcf')
 
 print(H1N1_vcf.columns)
 
+# Data pre-processing - need to one-hot encode REF and ALT columns because random forest does not like strings
+### From https://towardsdatascience.com/categorical-encoding-using-label-encoding-and-one-hot-encoder-911ef77fb5bd
+### Generate binary values using dummy encoding and avoid dummy trap by dropping the first base
+
+ref_bases_df = pd.concat([H1N1_vcf, pd.get_dummies(H1N1_vcf['REF'], prefix='REF_base', drop_first=True)], axis=1)
+alt_ref_bases_df = pd.concat([ref_bases_df, pd.get_dummies(H1N1_vcf['ALT'], prefix='ALT_base', drop_first=True)], axis=1)
+
 # Split data into X and y to predict quality scores from other features
 
-### Dependent variables - position on chromosome, chromosome number, reference allele, later include trinucleotide
+### Independent variables - position on chromosome, chromosome number, reference allele, later include trinucleotide
 ### context
 
-### Goal is to predict alternate allele ("ALT")
+### Use human VCF on Box and chr() for information relating to CHROM
 
-print(H1N1_vcf['QUAL'])
+### Quality score is the dependent variable
+
 y = H1N1_vcf['QUAL']
-X = H1N1_vcf.drop(['QUAL'], axis=1)
+
+### Dropping quality scores and other nonnumerical information (also dropping REF and ALT because we have dummies)
+
+X = H1N1_vcf.drop(['QUAL', 'ALT', 'REF', 'CHROM', 'FILTER', 'ID', 'INFO'], axis=1)
+
+### May have to vary testing size
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+
+# Observe shape of data
 
 print('Shape of original dataset:      ', H1N1_vcf.shape)
 print('Shape of input - training set:  ', X_train.shape)
@@ -49,20 +65,25 @@ print('Shape of output - training set: ', y_train.shape)
 print('Shape of input - testing set:   ', X_test.shape)
 print('Shape of output - testing set:  ', y_test.shape)
 
-# Look into LabelEncoder() function or just drop the column - random forest doesn't like strings
-# https://stackoverflow.com/questions/30384995/randomforestclassfier-fit-valueerror-could-not-convert-string-to-float
+# Convert y_train and y_test to arrays and reshape
+
+y_test_array = y_test.to_numpy()
+y_test_array = y_test_array.reshape(-1, 1)
+print(y_test_array.shape)
 
 # Define the model
 
 random_state = 0
-random_forest = RandomForestRegressor(n_estimators=20, random_state=random_state)
+random_forest = RandomForestRegressor(n_estimators=20, oob_score=True, random_state=random_state)
 
 # Fit the regressor using the training data --> make predictions --> score models
 
 random_forest.fit(X_train, y_train)
-# y_pred = random_forest.predict(X_test)
+y_pred = random_forest.predict(X_test)
 
-# random_forest.score()
+y_pred = y_pred.reshape(-1, 1)
+
+print(random_forest.score(y_test_array, y_pred))
 
 # Cross-validation --> need to choose either k folds or grid search
 
