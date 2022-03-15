@@ -14,6 +14,7 @@
 # Testing Git
 
 import numpy as np
+import pandas as pd
 import argparse
 import sys
 import pickle
@@ -26,6 +27,26 @@ from functools import reduce
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 
 from source.probability import DiscreteDistribution
+
+from bisect import bisect_left
+
+def take_closest(bins, quality):
+    """
+    Assumes bins is sorted. Returns closest value to quality.
+
+    If two numbers are equally close, return the smallest number.
+    """
+    pos = bisect_left(bins, quality)
+    if pos == 0:
+        return bins[0]
+    if pos == len(bins):
+        return bins[-1]
+    before = bins[pos - 1]
+    after = bins[pos]
+    if after - quality < quality - before:
+        return after
+    else:
+        return before
 
 
 def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
@@ -58,10 +79,32 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
     current_line = 0
     quarters = lines_to_read // 4
 
+    input_string = input('Enter the bins wanted, spereated by a space:\n Example:0 12 24 36')
+    if False: #change later 
+        sys.exit('Error: Invalid input.\n exiting...')
+
+    #Makes a dictionary with the user's bins as keys
+    inputs_list= input_string.split()
+    quality_bins = {} #list of user inputs      *** 
+    for bins in inputs_list:
+        quality_bins[bins] = 0
+
+    #A list of n dictionaries, n being the length of a sequence // Put outside of this loop
+    error_model = {
+        'q_scores': [quality_bins], #a list of q scores dictionary for each base
+        'q_score_probabilities': np.zeros(actual_readlen, columns = inputs_list, dtype= float), # number of bins * length of sequence data frame to hold the quality score probabilities
+        'quality_offset': {off_q}, #(off_q)??
+        'avg_error': {},
+        'error_parameters': {}#hard coded
+    }
+
+
     if is_aligned:
         g = f.fetch()
     else:
         g = f
+
+    obtained_read_length = False #Used to get read length, the read length will = the fist read length.
 
     for read in g:
         if is_aligned:
@@ -72,23 +115,24 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
             actual_readlen = len(qualities_to_check) - 1
             print('assuming read length is uniform...')
             print('detected read length (from first read found):', actual_readlen)
-            prior_q = np.zeros([actual_readlen, real_q])
-            total_q = [None] + [np.zeros([real_q, real_q]) for n in range(actual_readlen - 1)]
+            
+        # check if read length is more than 0 and if we have the read length already**    
+        if actual_readlen > 0 and not obtained_read_length: 
+            error_model['q_scores'] = [quality_bins] * (actual_readlen)
+            obtained_read_length = True
 
         # sanity-check readlengths
         if len(qualities_to_check) - 1 != actual_readlen:
             print('skipping read with unexpected length...')
             continue
+        
+    
+        for i in range(0, actual_readlen-1):
+            q = qualities_to_check[i] #The qualities of each base
+            q_dict[q] = True #??
+            bin = take_closest(quality_bins, q)
+            error_model['q_scores'][i][bin] +=1
 
-        for i in range(actual_readlen):
-            q = qualities_to_check[i]
-            q_dict[q] = True
-            prev_q = q
-            if i == 0:
-                prior_q[i][q] += 1
-            else:
-                total_q[i][prev_q, q] += 1
-                prior_q[i][q] += 1
 
         current_line += 1
         if current_line % quarters == 0:
@@ -97,6 +141,18 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
             break
 
     f.close()
+
+
+    #porbability calculator
+    pdIndex = 0
+    for dict in error_model['q_scores']:#for every dictionary(scores of a single base in the reads)
+        total = sum(dict.values())
+        if not total == actual_readlen: # total should = the read length
+            print('error')# among other things
+        for key, value in dict.items(): # items() returns a set-like view backed by the dict
+            error_model['q_score_probabilities'][pdIndex][key] = value / total
+        pdIndex += 1
+
 
     # some sanity checking again...
     q_range = [min(q_dict.keys()), max(q_dict.keys())]
@@ -107,87 +163,6 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
         print('\nError: Read in Q-scores above specified maximum:', q_range[1], '>', real_q, '\n')
         exit(1)
 
-    print('computing probabilities...')
-    prob_q = [None] + [[[0. for m in range(real_q)] for n in range(real_q)] for p in range(actual_readlen - 1)]
-    for p in range(1, actual_readlen):
-        for i in range(real_q):
-            row_sum = float(np.sum(total_q[p][i, :])) + prob_smooth * real_q
-            if row_sum <= 0.:
-                continue
-            for j in range(real_q):
-                prob_q[p][i][j] = (total_q[p][i][j] + prob_smooth) / row_sum
-
-    init_q = [[0. for m in range(real_q)] for n in range(actual_readlen)]
-    for i in range(actual_readlen):
-        row_sum = float(np.sum(prior_q[i, :])) + init_smooth * real_q
-        if row_sum <= 0.:
-            continue
-        for j in range(real_q):
-            init_q[i][j] = (prior_q[i][j] + init_smooth) / row_sum
-
-    if plot_stuff:
-        mpl.rcParams.update({'font.size': 14, 'font.weight': 'bold', 'lines.linewidth': 3})
-
-        mpl.figure(1)
-        Z = np.array(init_q).T
-        X, Y = np.meshgrid(range(0, len(Z[0]) + 1), range(0, len(Z) + 1))
-        mpl.pcolormesh(X, Y, Z, vmin=0., vmax=0.25)
-        mpl.axis([0, len(Z[0]), 0, len(Z)])
-        mpl.yticks(range(0, len(Z), 10), range(0, len(Z), 10))
-        mpl.xticks(range(0, len(Z[0]), 10), range(0, len(Z[0]), 10))
-        mpl.xlabel('Read Position')
-        mpl.ylabel('Quality Score')
-        mpl.title('Q-Score Prior Probabilities')
-        mpl.colorbar()
-
-        mpl.show()
-
-        v_min_log = [-4, 0]
-        min_val = 10 ** v_min_log[0]
-        q_labels = [str(n) for n in range(q_range[0], q_range[1] + 1) if n % 5 == 0]
-        print(q_labels)
-        q_ticks_x = [int(n) + 0.5 for n in q_labels]
-        q_ticks_y = [(real_q - int(n)) - 0.5 for n in q_labels]
-
-        for p in range(1, actual_readlen, 10):
-            current_data = np.array(prob_q[p])
-            for i in range(len(current_data)):
-                for j in range(len(current_data[i])):
-                    current_data[i][j] = max(min_val, current_data[i][j])
-
-            # matrix indices:		pcolormesh plotting:	plot labels and axes:
-            #
-            #      y				   ^					   ^
-            #	   -->				 x |					 y |
-            #  x |					    -->					    -->
-            #    v 					    y					    x
-            #
-            # to plot a MxN matrix 'Z' with rowNames and colNames we need to:
-            #
-            # pcolormesh(X,Y,Z[::-1,:])		# invert x-axis
-            # # swap x/y axis parameters and labels, remember x is still inverted:
-            # xlim([yMin,yMax])
-            # ylim([M-xMax,M-xMin])
-            # xticks()
-            #
-
-            mpl.figure(p + 1)
-            z = np.log10(current_data)
-            x, y = np.meshgrid(range(0, len(Z[0]) + 1), range(0, len(Z) + 1))
-            mpl.pcolormesh(x, y, z[::-1, :], vmin=v_min_log[0], vmax=v_min_log[1], cmap='jet')
-            mpl.xlim([q_range[0], q_range[1] + 1])
-            mpl.ylim([real_q - q_range[1] - 1, real_q - q_range[0]])
-            mpl.yticks(q_ticks_y, q_labels)
-            mpl.xticks(q_ticks_x, q_labels)
-            mpl.xlabel('\n' + r'$Q_{i+1}$')
-            mpl.ylabel(r'$Q_i$')
-            mpl.title('Q-Score Transition Frequencies [Read Pos:' + str(p) + ']')
-            cb = mpl.colorbar()
-            cb.set_ticks([-4, -3, -2, -1, 0])
-            cb.set_ticklabels([r'$10^{-4}$', r'$10^{-3}$', r'$10^{-2}$', r'$10^{-1}$', r'$10^{0}$'])
-
-        # mpl.tight_layout()
-        mpl.show()
 
     print('estimating average error rate via simulation...')
     q_scores = range(real_q)
@@ -204,18 +179,19 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
             else:
                 prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution(prob_q[i][j], q_scores))
 
-    count_dict = {}
-    for q in q_scores:
+#average error
+    count_dict = {} 
+    for q in q_scores: #q_scores is a range(real_q), which is an argument.
         count_dict[q] = 0
-    lines_to_sample = len(range(1, n_samp + 1))
-    samp_quarters = lines_to_sample // 4
+    lines_to_sample = len(range(1, n_samp + 1)) #n_samp is an argument, number of reads??
+    samp_quarters = lines_to_sample // 4 #divide the reads into 1/4s ??
     for samp in range(1, n_samp + 1):
         if samp % samp_quarters == 0:
-            print(f'{(samp/lines_to_sample)*100:.0f}%')
-        my_q = init_dist_by_pos[0].sample()
+            print(f'{(samp/lines_to_sample)*100:.0f}%') #loading bar or something like that
+        my_q = init_dist_by_pos[0].sample() #was a discrete distribution
         count_dict[my_q] += 1
         for i in range(1, len(init_q)):
-            my_q = prob_dist_by_pos_by_prev_q[i][my_q].sample()
+            my_q = prob_dist_by_pos_by_prev_q[i][my_q].sample() #works with prevoius position, are we still doing that?
             count_dict[my_q] += 1
 
     tot_bases = float(sum(count_dict.values()))
@@ -226,6 +202,11 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
         avg_err += eVal * (count_dict[k] / tot_bases)
     print('AVG ERROR RATE:', avg_err)
 
+    quality_score_probability_matrix = error_model['q_score_probabilities']
+    error_model['q_score_probabilities'] = quality_score_probability_matrix.apply(
+       lambda row: DiscreteDistribution(error_model['quality_scores'], row), axis=1).to_numpy()
+
+
     return init_q, prob_q, avg_err
 
 
@@ -233,11 +214,11 @@ def main():
     parser = argparse.ArgumentParser(description='genSeqErrorModel.py')
     parser.add_argument('-i', type=str, required=True, metavar='<str>', help="* input_read1.fq (.gz) / input_read1.sam")
     parser.add_argument('-o', type=str, required=True, metavar='<str>', help="* output.p")
-    parser.add_argument('-i2', type=str, required=False, metavar='<str>', default=None,
-                        help="input_read2.fq (.gz)")
-    parser.add_argument('-p', type=str, required=False, metavar='<str>', default=None, help="input_alignment.pileup")
-    parser.add_argument('-q', type=int, required=False, metavar='<int>', default=33, help="quality score offset [33]")
-    parser.add_argument('-Q', type=int, required=False, metavar='<int>', default=41, help="maximum quality score [41]")
+    # parser.add_argument('-i2', type=str, required=False, metavar='<str>', default=None,
+    #                     help="input_read2.fq (.gz)")
+    # parser.add_argument('-p', type=str, required=False, metavar='<str>', default=None, help="input_alignment.pileup")
+    # parser.add_argument('-q', type=int, required=False, metavar='<int>', default=33, help="quality score offset [33]")
+    parser.add_argument('-Q', type=int, required=False, metavar='<int>', default=[0, 12, 24, 36], help="List of quality score bins [0, 12, 24, 36]")
     parser.add_argument('-n', type=int, required=False, metavar='<int>', default=-1,
                         help="maximum number of reads to process [all]")
     parser.add_argument('-s', type=int, required=False, metavar='<int>', default=1000000,
@@ -298,10 +279,12 @@ def main():
     outfile = pathlib.Path(outfile).with_suffix(".p")
     print('saving model...')
     if infile2 is None:
+        #pickle.dump({quality_scores:[], quality_scores_probabilities:[]})
         pickle.dump([init_q, prob_q, q_scores, off_q, avg_err, err_params], open(outfile, 'wb'))
     else:
         pickle.dump([init_q, prob_q, init_q2, prob_q2, q_scores, off_q, avg_err, err_params], open(outfile, 'wb'))
 
+#pickle
 
 if __name__ == '__main__':
     main()
