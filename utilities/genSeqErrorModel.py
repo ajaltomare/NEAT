@@ -49,10 +49,7 @@ def take_closest(bins, quality):
         return before
 
 
-def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
-    init_smooth = 0.
-    prob_smooth = 0.
-
+def parse_file(input_file, quality_scores, real_q, off_q, max_reads, n_samp):
     # Takes a gzip or sam file and returns the simulation's average error rate,
     print('reading ' + input_file + '...')
     is_aligned = False
@@ -79,23 +76,36 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
     current_line = 0
     quarters = lines_to_read // 4
 
-    input_string = input('Enter the bins wanted, spereated by a space:\n Example:0 12 24 36')
-    if False: #change later 
-        sys.exit('Error: Invalid input.\n exiting...')
+    # input_string = input('Enter the bins wanted, spereated by a space:\n Example:0 12 24 36\n')
+    # if False: #change later 
+    #     sys.exit('Error: Invalid input.\n exiting...')
 
-    #Makes a dictionary with the user's bins as keys
-    inputs_list= input_string.split()
-    quality_bins = {} #list of user inputs      *** 
-    for bins in inputs_list:
-        quality_bins[bins] = 0
+    # #Makes a dictionary with the user's bins as keys
+    # inputs_list = [int(n) for n in input_string.split()] #Converts the string of numbers into a list of ints
+    # quality_bins = {} #list of user inputs      *** 
+    # for bins in inputs_list:
+    #     quality_bins[bins] = 0
+    inputs_list = quality_scores
 
     #A list of n dictionaries, n being the length of a sequence // Put outside of this loop
     error_model = {
-        'q_scores': [quality_bins], #a list of q scores dictionary for each base
-        'q_score_probabilities': np.zeros(actual_readlen, columns = inputs_list, dtype= float), # number of bins * length of sequence data frame to hold the quality score probabilities
-        'quality_offset': {off_q}, #(off_q)??
+        'quality_scores': inputs_list, #a list of q scores
+        'quality_score_probabilities': [], # number of bins * length of sequence data frame to hold the quality score probabilities
+        'quality_offset': off_q,
         'avg_error': {},
-        'error_parameters': {}#hard coded
+        'error_parameters': [
+                            # sequencing substitution transition probabilities
+                            [[0., 0.4918, 0.3377, 0.1705], [0.5238, 0., 0.2661, 0.2101], [0.3754, 0.2355, 0., 0.3890], [0.2505, 0.2552, 0.4942, 0.]],
+                            # if a sequencing error occurs, what are the odds it's an indel?
+                            0.01,
+                            # sequencing indel error length distribution
+                            [0.999, 0.001],
+                            [1, 2],
+                            # if a sequencing indel error occurs, what are the odds it's an insertion as opposed to a deletion?
+                            0.4,
+                            # if a sequencing insertion error occurs, what's the probability of it being an A, C, G, T...
+                            [0.25, 0.25, 0.25, 0.25]
+                            ]
     }
 
 
@@ -105,6 +115,7 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
         g = f
 
     obtained_read_length = False #Used to get read length, the read length will = the fist read length.
+    temp_q_count = 0
 
     for read in g:
         if is_aligned:
@@ -118,7 +129,8 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
             
         # check if read length is more than 0 and if we have the read length already**    
         if actual_readlen > 0 and not obtained_read_length: 
-            error_model['q_scores'] = [quality_bins] * (actual_readlen)
+            temp_q_count = np.zeros((actual_readlen, len(inputs_list)))
+            error_model['quality_score_probabilities'] = np.zeros((actual_readlen, len(inputs_list)), dtype= float)
             obtained_read_length = True
 
         # sanity-check readlengths
@@ -126,12 +138,12 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
             print('skipping read with unexpected length...')
             continue
         
-    
-        for i in range(0, actual_readlen-1):
+        for i in range(0, actual_readlen):
             q = qualities_to_check[i] #The qualities of each base
-            q_dict[q] = True #??
-            bin = take_closest(quality_bins, q)
-            error_model['q_scores'][i][bin] +=1
+            # q_dict[q] = True
+            bin = take_closest(inputs_list, q)
+            bin_index = inputs_list.index(bin)
+            temp_q_count[i][bin_index] +=1
 
 
         current_line += 1
@@ -139,35 +151,32 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
             print(f'{(current_line/lines_to_read)*100:.0f}%')
         if 0 < max_reads <= current_line:
             break
-
     f.close()
 
-
     #porbability calculator
-    pdIndex = 0
-    for dict in error_model['q_scores']:#for every dictionary(scores of a single base in the reads)
-        total = sum(dict.values())
-        if not total == actual_readlen: # total should = the read length
-            print('error')# among other things
-        for key, value in dict.items(): # items() returns a set-like view backed by the dict
-            error_model['q_score_probabilities'][pdIndex][key] = value / total
-        pdIndex += 1
-
+    base_index = 0
+    for base in temp_q_count:#for every dictionary(scores of a single base in the reads)
+        total = sum(base)
+        bin_index = 0
+        for score in base:
+            error_model['quality_score_probabilities'][base_index][bin_index] = score / total
+            bin_index += 1
+        base_index += 1
 
     # some sanity checking again...
-    q_range = [min(q_dict.keys()), max(q_dict.keys())]
-    if q_range[0] < 0:
-        print('\nError: Read in Q-scores below 0\n')
-        exit(1)
-    if q_range[1] > real_q:
-        print('\nError: Read in Q-scores above specified maximum:', q_range[1], '>', real_q, '\n')
-        exit(1)
+    # q_range = [min(q_dict.keys()), max(q_dict.keys())]
+    # if q_range[0] < 0:
+    #     print('\nError: Read in Q-scores below 0\n')
+    #     exit(1)
+    # if q_range[1] > real_q:
+    #     print('\nError: Read in Q-scores above specified maximum:', q_range[1], '>', real_q, '\n')
+    #     exit(1)
 
-
-    print('estimating average error rate via simulation...')
-    q_scores = range(real_q)
+    #print('estimating average error rate via simulation...')
+    #q_scores = range(real_q)
     # print (len(init_q), len(init_q[0]))
     # print (len(prob_q), len(prob_q[1]), len(prob_q[1][0]))
+
 
     init_dist_by_pos = [DiscreteDistribution(init_q[i], q_scores) for i in range(len(init_q))]
     prob_dist_by_pos_by_prev_q = [None]
@@ -179,7 +188,7 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
             else:
                 prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution(prob_q[i][j], q_scores))
 
-#average error
+    #average error
     count_dict = {} 
     for q in q_scores: #q_scores is a range(real_q), which is an argument.
         count_dict[q] = 0
@@ -202,12 +211,12 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
         avg_err += eVal * (count_dict[k] / tot_bases)
     print('AVG ERROR RATE:', avg_err)
 
-    quality_score_probability_matrix = error_model['q_score_probabilities']
-    error_model['q_score_probabilities'] = quality_score_probability_matrix.apply(
+    quality_score_probability_matrix = error_model['quality_score_probabilities']
+    error_model['quality_score_probabilities'] = quality_score_probability_matrix.apply(
        lambda row: DiscreteDistribution(error_model['quality_scores'], row), axis=1).to_numpy()
 
 
-    return init_q, prob_q, avg_err
+    return error_model
 
 
 def main():
@@ -217,7 +226,7 @@ def main():
     # parser.add_argument('-i2', type=str, required=False, metavar='<str>', default=None,
     #                     help="input_read2.fq (.gz)")
     # parser.add_argument('-p', type=str, required=False, metavar='<str>', default=None, help="input_alignment.pileup")
-    # parser.add_argument('-q', type=int, required=False, metavar='<int>', default=33, help="quality score offset [33]")
+    parser.add_argument('-q', type=int, required=False, metavar='<int>', default=33, help="quality score offset [33]")
     parser.add_argument('-Q', type=int, required=False, metavar='<int>', default=[0, 12, 24, 36], help="List of quality score bins [0, 12, 24, 36]")
     parser.add_argument('-n', type=int, required=False, metavar='<int>', default=-1,
                         help="maximum number of reads to process [all]")
@@ -242,11 +251,15 @@ def main():
         (init_q2, prob_q2, avg_err2) = parse_file(infile2, real_q, off_q, max_reads, n_samp, plot_stuff)
         avg_err = (avg_err1 + avg_err2) / 2.
 
+
+
+
+
     #
     #	embed some default sequencing error parameters if no pileup is provided
     #
     if pile_up == None:
-
+        
         print('Using default sequencing error parameters...')
 
         # sequencing substitution transition probabilities
@@ -272,6 +285,10 @@ def main():
         exit(1)
 
     err_params = [sse_prob, sie_rate, sie_prob, sie_val, sie_ins_freq, sie_ins_nucl]
+
+
+
+
 
     #
     #	finally, let's save our output model
