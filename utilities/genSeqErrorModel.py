@@ -24,9 +24,16 @@ import pysam
 from functools import reduce
 
 # enables import from neighboring package
-sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 
-from source.probability import DiscreteDistribution
+# sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
+# from source.probability import DiscreteDistribution
+
+
+sys.path.append('/Users/ralhazmy/Documents/NEAT/NEAT/source')
+#sys.path.insert(1, '/Users/ralhazmy/Documents/NEAT/NEAT')
+from probability import DiscreteDistribution
+
+#from NEAT.source.probability import DiscreteDistribution
 
 from bisect import bisect_left
 
@@ -163,57 +170,78 @@ def parse_file(input_file, quality_scores, real_q, off_q, max_reads, n_samp):
             bin_index += 1
         base_index += 1
 
-    # some sanity checking again...
-    # q_range = [min(q_dict.keys()), max(q_dict.keys())]
-    # if q_range[0] < 0:
-    #     print('\nError: Read in Q-scores below 0\n')
-    #     exit(1)
-    # if q_range[1] > real_q:
-    #     print('\nError: Read in Q-scores above specified maximum:', q_range[1], '>', real_q, '\n')
-    #     exit(1)
+    Discretes = []
+    for base in error_model['quality_score_probabilities']:
+        Discretes.append(DiscreteDistribution(error_model['quality_scores'], base))
+        #(weights, values)
+        #prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution(prob_q[i][j], q_scores))
+        #here they put the probability as the weight??
+    print(Discretes)
+    #def __init__(self, weights, values, degenerate_val=None, method='bisect'):
+    #Error: length and weights and values vectors must be the same.
 
-    #print('estimating average error rate via simulation...')
-    #q_scores = range(real_q)
-    # print (len(init_q), len(init_q[0]))
-    # print (len(prob_q), len(prob_q[1]), len(prob_q[1][0]))
-
-
-    init_dist_by_pos = [DiscreteDistribution(init_q[i], q_scores) for i in range(len(init_q))]
-    prob_dist_by_pos_by_prev_q = [None]
-    for i in range(1, len(init_q)):
-        prob_dist_by_pos_by_prev_q.append([])
-        for j in range(len(init_q[0])):
-            if np.sum(prob_q[i][j]) <= 0.:  # if we don't have sufficient data for a transition, use the previous qscore
-                prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution([1], [q_scores[j]], degenerate_val=q_scores[j]))
-            else:
-                prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution(prob_q[i][j], q_scores))
-
-    #average error
-    count_dict = {} 
-    for q in q_scores: #q_scores is a range(real_q), which is an argument.
+    count_dict = {}
+    for q in error_model['quality_scores']:
         count_dict[q] = 0
+    #example: {0: 0, 12: 0, 24: 0, 36: 0}
     lines_to_sample = len(range(1, n_samp + 1)) #n_samp is an argument, number of reads??
-    samp_quarters = lines_to_sample // 4 #divide the reads into 1/4s ??
+    samp_quarters = lines_to_sample // 4 #divide the reads into 1/4s for the loading bar
     for samp in range(1, n_samp + 1):
         if samp % samp_quarters == 0:
-            print(f'{(samp/lines_to_sample)*100:.0f}%') #loading bar or something like that
-        my_q = init_dist_by_pos[0].sample() #was a discrete distribution
-        count_dict[my_q] += 1
-        for i in range(1, len(init_q)):
-            my_q = prob_dist_by_pos_by_prev_q[i][my_q].sample() #works with prevoius position, are we still doing that?
+            print(f'{(samp/lines_to_sample)*100:.0f}%') #loading bar
+        #my_q = Discretes[0].sample()
+        #count_dict[my_q] += 1
+        for i in range(1, len(error_model['quality_score_probabilities'])):
+            my_q = Discretes[i][my_q].sample()
             count_dict[my_q] += 1
+
+    print(count_dict)
 
     tot_bases = float(sum(count_dict.values()))
     avg_err = 0.
     for k in sorted(count_dict.keys()):
         eVal = 10. ** (-k / 10.)
-        # print k, eVal, count_dict[k]
+        print (k, eVal, count_dict[k])
         avg_err += eVal * (count_dict[k] / tot_bases)
     print('AVG ERROR RATE:', avg_err)
 
-    quality_score_probability_matrix = error_model['quality_score_probabilities']
-    error_model['quality_score_probabilities'] = quality_score_probability_matrix.apply(
-       lambda row: DiscreteDistribution(error_model['quality_scores'], row), axis=1).to_numpy()
+
+
+
+
+
+    # init_dist_by_pos = [DiscreteDistribution(init_q[i], q_scores) for i in range(len(init_q))]
+    # prob_dist_by_pos_by_prev_q = [None]
+    # for i in range(1, len(init_q)):
+    #     prob_dist_by_pos_by_prev_q.append([])
+    #     for j in range(len(init_q[0])):
+    #         if np.sum(prob_q[i][j]) <= 0.:  # if we don't have sufficient data for a transition, use the previous qscore
+    #             prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution([1], [q_scores[j]], degenerate_val=q_scores[j]))
+    #         else:
+    #             prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution(prob_q[i][j], q_scores))
+
+    #average error
+    # count_dict = {} 
+    # for q in q_scores: #q_scores is a range(real_q), which is an argument.
+    #     count_dict[q] = 0
+    # lines_to_sample = len(range(1, n_samp + 1)) #n_samp is an argument, number of reads??
+    # samp_quarters = lines_to_sample // 4 #divide the reads into 1/4s ??
+    # for samp in range(1, n_samp + 1):
+    #     if samp % samp_quarters == 0:
+    #         print(f'{(samp/lines_to_sample)*100:.0f}%') #loading bar or something like that
+    #     my_q = init_dist_by_pos[0].sample() #was a discrete distribution
+    #     count_dict[my_q] += 1
+    #     for i in range(1, len(init_q)):
+    #         my_q = prob_dist_by_pos_by_prev_q[i][my_q].sample() #works with prevoius position, are we still doing that?
+    #         count_dict[my_q] += 1
+
+    # tot_bases = float(sum(count_dict.values()))
+    # avg_err = 0.
+    # for k in sorted(count_dict.keys()):
+    #     eVal = 10. ** (-k / 10.)
+    #     # print k, eVal, count_dict[k]
+    #     avg_err += eVal * (count_dict[k] / tot_bases)
+    # print('AVG ERROR RATE:', avg_err)
 
 
     return error_model
