@@ -79,24 +79,13 @@ def parse_file(input_file, quality_scores, real_q, off_q, max_reads, n_samp):
         sys.exit(1)
 
     actual_readlen = 0
-    q_dict = {}
+    #q_dict = {}
     current_line = 0
     quarters = lines_to_read // 4
 
-    # input_string = input('Enter the bins wanted, spereated by a space:\n Example:0 12 24 36\n')
-    # if False: #change later 
-    #     sys.exit('Error: Invalid input.\n exiting...')
-
-    # #Makes a dictionary with the user's bins as keys
-    # inputs_list = [int(n) for n in input_string.split()] #Converts the string of numbers into a list of ints
-    # quality_bins = {} #list of user inputs      *** 
-    # for bins in inputs_list:
-    #     quality_bins[bins] = 0
-    inputs_list = quality_scores
-
     #A list of n dictionaries, n being the length of a sequence // Put outside of this loop
     error_model = {
-        'quality_scores': inputs_list, #a list of q scores
+        'quality_scores': quality_scores, #a list of q scores
         'quality_score_probabilities': [], # number of bins * length of sequence data frame to hold the quality score probabilities
         'quality_offset': off_q,
         'avg_error': {},
@@ -129,15 +118,15 @@ def parse_file(input_file, quality_scores, real_q, off_q, max_reads, n_samp):
             qualities_to_check = read.query_alignment_qualities
         else:
             qualities_to_check = read.get_quality_array()
-        if actual_readlen == 0:
+        if actual_readlen == 0: #read length = the length of the first read
             actual_readlen = len(qualities_to_check) - 1
             print('assuming read length is uniform...')
             print('detected read length (from first read found):', actual_readlen)
             
         # check if read length is more than 0 and if we have the read length already**    
         if actual_readlen > 0 and not obtained_read_length: 
-            temp_q_count = np.zeros((actual_readlen, len(inputs_list)))
-            error_model['quality_score_probabilities'] = np.zeros((actual_readlen, len(inputs_list)), dtype= float)
+            temp_q_count = np.zeros((actual_readlen, len(quality_scores)))
+            error_model['quality_score_probabilities'] = np.zeros((actual_readlen, len(quality_scores)), dtype= float)
             obtained_read_length = True
 
         # sanity-check readlengths
@@ -147,12 +136,11 @@ def parse_file(input_file, quality_scores, real_q, off_q, max_reads, n_samp):
         
         for i in range(0, actual_readlen):
             q = qualities_to_check[i] #The qualities of each base
-            # q_dict[q] = True
-            bin = take_closest(inputs_list, q)
-            bin_index = inputs_list.index(bin)
+            bin = take_closest(quality_scores, q)
+            bin_index = quality_scores.index(bin)
             temp_q_count[i][bin_index] +=1
 
-
+        #loading
         current_line += 1
         if current_line % quarters == 0:
             print(f'{(current_line/lines_to_read)*100:.0f}%')
@@ -170,79 +158,35 @@ def parse_file(input_file, quality_scores, real_q, off_q, max_reads, n_samp):
             bin_index += 1
         base_index += 1
 
+    # A Discrete distribution of the quality_score probabilities
     Discretes = []
     for base in error_model['quality_score_probabilities']:
         Discretes.append(DiscreteDistribution(error_model['quality_scores'], base))
-        #(weights, values)
-        #prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution(prob_q[i][j], q_scores))
-        #here they put the probability as the weight??
-    print(Discretes)
-    #def __init__(self, weights, values, degenerate_val=None, method='bisect'):
-    #Error: length and weights and values vectors must be the same.
 
+    # A counter for the Discrete distribution results run for n_samp times
     count_dict = {}
     for q in error_model['quality_scores']:
         count_dict[q] = 0
     #example: {0: 0, 12: 0, 24: 0, 36: 0}
-    lines_to_sample = len(range(1, n_samp + 1)) #n_samp is an argument, number of reads??
+    lines_to_sample = len(range(1, n_samp + 1))
     samp_quarters = lines_to_sample // 4 #divide the reads into 1/4s for the loading bar
     for samp in range(1, n_samp + 1):
         if samp % samp_quarters == 0:
             print(f'{(samp/lines_to_sample)*100:.0f}%') #loading bar
-        #my_q = Discretes[0].sample()
-        #count_dict[my_q] += 1
-        for i in range(1, len(error_model['quality_score_probabilities'])):
-            my_q = Discretes[i][my_q].sample()
+        for i in range(actual_readlen):
+            my_q = Discretes[i].sample()
             count_dict[my_q] += 1
 
     print(count_dict)
 
+    #Calculates the average error rate
     tot_bases = float(sum(count_dict.values()))
     avg_err = 0.
     for k in sorted(count_dict.keys()):
         eVal = 10. ** (-k / 10.)
-        print (k, eVal, count_dict[k])
+        #print (k, eVal, count_dict[k])
         avg_err += eVal * (count_dict[k] / tot_bases)
     print('AVG ERROR RATE:', avg_err)
-
-
-
-
-
-
-    # init_dist_by_pos = [DiscreteDistribution(init_q[i], q_scores) for i in range(len(init_q))]
-    # prob_dist_by_pos_by_prev_q = [None]
-    # for i in range(1, len(init_q)):
-    #     prob_dist_by_pos_by_prev_q.append([])
-    #     for j in range(len(init_q[0])):
-    #         if np.sum(prob_q[i][j]) <= 0.:  # if we don't have sufficient data for a transition, use the previous qscore
-    #             prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution([1], [q_scores[j]], degenerate_val=q_scores[j]))
-    #         else:
-    #             prob_dist_by_pos_by_prev_q[-1].append(DiscreteDistribution(prob_q[i][j], q_scores))
-
-    #average error
-    # count_dict = {} 
-    # for q in q_scores: #q_scores is a range(real_q), which is an argument.
-    #     count_dict[q] = 0
-    # lines_to_sample = len(range(1, n_samp + 1)) #n_samp is an argument, number of reads??
-    # samp_quarters = lines_to_sample // 4 #divide the reads into 1/4s ??
-    # for samp in range(1, n_samp + 1):
-    #     if samp % samp_quarters == 0:
-    #         print(f'{(samp/lines_to_sample)*100:.0f}%') #loading bar or something like that
-    #     my_q = init_dist_by_pos[0].sample() #was a discrete distribution
-    #     count_dict[my_q] += 1
-    #     for i in range(1, len(init_q)):
-    #         my_q = prob_dist_by_pos_by_prev_q[i][my_q].sample() #works with prevoius position, are we still doing that?
-    #         count_dict[my_q] += 1
-
-    # tot_bases = float(sum(count_dict.values()))
-    # avg_err = 0.
-    # for k in sorted(count_dict.keys()):
-    #     eVal = 10. ** (-k / 10.)
-    #     # print k, eVal, count_dict[k]
-    #     avg_err += eVal * (count_dict[k] / tot_bases)
-    # print('AVG ERROR RATE:', avg_err)
-
 
     return error_model
 
@@ -278,9 +222,6 @@ def main():
         (init_q, prob_q, avg_err1) = parse_file(infile, real_q, off_q, max_reads, n_samp, plot_stuff)
         (init_q2, prob_q2, avg_err2) = parse_file(infile2, real_q, off_q, max_reads, n_samp, plot_stuff)
         avg_err = (avg_err1 + avg_err2) / 2.
-
-
-
 
 
     #
