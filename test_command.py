@@ -1,17 +1,20 @@
 #1>>redo options with click.option
 import click
 @click.command()
-@click.option('--r', prompt = "/home/suvinit/NEAT-data/H1N1/H1N1.fasta", help = 'Path to reference fasta')
-@click.option('--R', default = 100, help = 'The desired read length')
-@click.option('--o', default = "/home/suvinit/NEAT-data/H1N1/H1N1.test-run", help = 'output_prefix')
+#no capital letters:
+@click.option('--file_path', default = "/home/suvinit/NEAT-data/H1N1/H1N1.fa", help = 'Path to reference fasta', type=click.Path(exists=True))
 
+@click.option('--read_length', default = 100, help = 'The desired read length')
+#try to test is ^ this is within a certain range (50,300)
+
+@click.option('--output_path', default = "/home/suvinit/NEAT-data/H1N1/H1N1.test-run", help = 'output_prefix')
+#try validating that the file directory exists (/home/suvinit)
+
+def hello(file_path, read_length, output_path):
+	click.echo(f'Hello {file_path}' + f'Hello {read_length}' + f'Hello {output_path}')
 if __name__ == '__main__':
 	hello()
+	
+#try adding bam
+#parser.add_argument('--bam', required=False, action='store_true', default=False, help='output golden BAM file')
 
-#def hello(count, name):
-#   """Simple program that greets NAME for a total of COUNT times."""
-#   for x in range(count):
-#      click.echo(f"Hello {name}!")
-
-#if __name__ == '__main__':
-#   hello()
