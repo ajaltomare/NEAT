@@ -576,7 +576,7 @@ def main(raw_args=None):
                         help='Rescale quality scores to match -E input')
     # TODO implement a broader debugging scheme for subclasses.
     parser.add_argument('-d', required=False, action='store_true', default=False, help='Activate Debug Mode')
-    parser.add_argument('-np', required=False, default=1, help='Num processors')
+    parser.add_argument('-np', required=False, type=int, default=1, help='Num processors')
     args = parser.parse_args(raw_args)
 
     """
