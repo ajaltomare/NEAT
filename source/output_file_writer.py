@@ -95,24 +95,26 @@ class OutputFileWriter:
                  no_fastq=False, fasta_instead=False):
 
         self.fasta_instead = fasta_instead
+        self.out_prefix = out_prefix
         # TODO Eliminate paired end as an option for fastas. Plan is to create a write fasta method.
-        if self.fasta_instead:
-            fq1 = pathlib.Path(out_prefix + '.fasta.gz')
-            fq2 = None
-        else:
-            fq1 = pathlib.Path(out_prefix + '_read1.fq.gz')
-            fq2 = pathlib.Path(out_prefix + '_read2.fq.gz')
+        # if self.fasta_instead:
+        #     fq1 = pathlib.Path(out_prefix + '.fasta.gz')
+        #     fq2 = None
+        # else:
+        #     fq1 = pathlib.Path(out_prefix + '_read1.fq.gz')
+        #     fq2 = pathlib.Path(out_prefix + '_read2.fq.gz')
         bam = pathlib.Path(out_prefix + '_golden.bam')
         vcf = pathlib.Path(out_prefix + '_golden.vcf.gz')
 
         # TODO Make a fasta-specific method
         self.no_fastq = no_fastq
-        if not self.no_fastq:
-            self.fq1_file = bgzf.open(fq1, 'w')
+        self.paired = paired
+        # if not self.no_fastq:
+        #     self.fq1_file = bgzf.open(fq1, 'w')
 
-            self.fq2_file = None
-            if paired:
-                self.fq2_file = bgzf.open(fq2, 'w')
+        #     self.fq2_file = None
+        #     if paired:
+        #         self.fq2_file = bgzf.open(fq2, 'w')
 
         # VCF OUTPUT
         self.vcf_file = None
@@ -176,6 +178,22 @@ class OutputFileWriter:
         self.bam_buffer = []
 
     # TODO add write_fasta_record
+    
+    def open(self, prefix):
+        if self.fasta_instead:
+            self.fq1 = pathlib.Path(self.out_prefix + f'_{prefix}.fasta.gz')
+            self.fq2 = None
+        else:
+            self.fq1 = pathlib.Path(self.out_prefix + f'_{prefix}_read1.fq.gz')
+            self.fq2 = pathlib.Path(self.out_prefix + f'_{prefix}_read2.fq.gz')
+
+        if not self.no_fastq:
+            self.fq1_file = bgzf.open(f'{self.fq1}', 'w')
+
+            self.fq2_file = None
+            if self.paired:
+                self.fq2_file = bgzf.open(f'{self.fq2}', 'w')
+
 
     def write_fastq_record(self, read_name, read1, qual1, read2=None, qual2=None, orientation=None):
         # Since read1 and read2 are Seq objects from Biopython, they have reverse_complement methods built-in
