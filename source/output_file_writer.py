@@ -1,5 +1,6 @@
 from struct import pack
 import Bio.bgzf as bgzf
+import gzip
 import pathlib
 import re
 
@@ -188,11 +189,11 @@ class OutputFileWriter:
             self.fq2 = pathlib.Path(self.out_prefix + f'_{prefix}_read2.fq.gz')
 
         if not self.no_fastq:
-            self.fq1_file = bgzf.open(f'{self.fq1}', 'a')
+            self.fq1_file = gzip.open(f'{self.fq1}', 'ab')
 
             self.fq2_file = None
             if self.paired:
-                self.fq2_file = bgzf.open(f'{self.fq2}', 'a')
+                self.fq2_file = gzip.open(f'{self.fq2}', 'ab')
 
 
     def write_fastq_record(self, read_name, read1, qual1, read2=None, qual2=None, orientation=None):
@@ -305,9 +306,9 @@ class OutputFileWriter:
                 len(self.fq1_buffer) and last_time) or (len(self.bam_buffer) and last_time):
             # fq
             if not self.no_fastq:
-                self.fq1_file.write(''.join(self.fq1_buffer))
+                self.fq1_file.write(''.join(self.fq1_buffer).encode('utf-8'))
                 if len(self.fq2_buffer):
-                    self.fq2_file.write(''.join(self.fq2_buffer))
+                    self.fq2_file.write(''.join(self.fq2_buffer).encode('utf-8'))
             # bam
             if len(self.bam_buffer):
                 bam_data = sorted(self.bam_buffer)
