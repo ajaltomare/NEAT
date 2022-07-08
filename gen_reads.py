@@ -483,7 +483,7 @@ def main(raw_args=None):
             target_size = WINDOW_TARGET_SCALE * read_len
             overlap = read_len
             overlap_min_window_size = read_len + 10
-
+        
         print('--------------------------------')
         if only_vcf:
             print('generating vcf...')
@@ -493,15 +493,21 @@ def main(raw_args=None):
             print('sampling reads...')
         tt = time.time()
         # start the progress bar
-        print("[", end='', flush=True)
+        if not debug:
+            print("[", end='', flush=True)
 
         buffer_added = 0
         # Applying variants to non-N regions
         for i in range(len(n_regions['non_N'])):
             (initial_position, final_position) = n_regions['non_N'][i]
+            
             number_target_windows = max([1, (final_position - initial_position) // target_size])
             base_pair_distance = int((final_position - initial_position) / float(number_target_windows))
-
+            
+            if debug:
+                print("REGIONS",initial_position, final_position,sep="\t")
+                print("",f"numTargetRegions: {number_target_windows}, basePairDistance: {base_pair_distance}", sep="\t")
+            
             # if for some reason our region is too small to process, skip it! (sorry)
             if number_target_windows == 1 and (final_position - initial_position) < overlap_min_window_size:
                 print('ELEMBIO: skipping region due to small window size (the sorry region)')
@@ -518,6 +524,10 @@ def main(raw_args=None):
                 # which inserted variants are in this window?
                 vars_in_window = []
                 updated = False
+
+                if debug:
+                    print(f"PROCESSING WINDOW: [{v_index_from_prev}] - {(start, end)}]",sep="\t")
+
                 for j in range(v_index_from_prev, len(valid_variants_from_vcf)):
                     variants_position = valid_variants_from_vcf[j][0]
                     # update: changed <= to <, so variant cannot be inserted in first position
@@ -528,27 +538,34 @@ def main(raw_args=None):
                         updated = True
                         v_index_from_prev = j
                     if variants_position >= end:
+                        if debug:
+                            print("",f"found all overlapping variants - stopping - j:{j}, pos:{variants_position} >= end:{end}",sep="\t")
                         break
 
                 next_start = end - overlap
                 next_end = min([next_start + base_pair_distance, final_position])
-                if next_end - next_start < base_pair_distance:
-                    end = next_end
-                    is_last_time = True
+
+                # why is this needed?
+                #if next_end - next_start < base_pair_distance:
+                #    end = next_end
+                #    is_last_time = True
+                #    print("",f"WARNING: next_end:{next_end} - next_start:{next_start} < base_pair_distance:{base_pair_distance}",sep="\t")
 
                 # print progress indicator
                 if debug:
-                    print(f'PROCESSING WINDOW: {(start, end), [buffer_added]}, '
-                          f'next: {(next_start, next_end)}, isLastTime: {is_last_time}')
-                current_progress += end - start
-                new_percent = int((current_progress * 100) / float(total_bp_span))
-                if new_percent > current_percent:
-                    if new_percent <= 99 or (new_percent == 100 and not have_printed100):
-                        if new_percent % 10 == 1:
-                            print('-', end='', flush=True)
-                    current_percent = new_percent
-                    if current_percent == 100:
-                        have_printed100 = True
+                    print("",f"vars_in_window: {len(vars_in_window)}",sep="\t")
+                    print("",f"next: {(next_start, next_end)}, isLastTime: {is_last_time}",sep="\t")
+
+                if not debug:
+                    current_progress += end - start
+                    new_percent = int((current_progress * 100) / float(total_bp_span))
+                    if new_percent > current_percent:
+                        if new_percent <= 99 or (new_percent == 100 and not have_printed100):
+                            if new_percent % 5 == 1:
+                                print('-', end='', flush=True)
+                        current_percent = new_percent
+                        if current_percent == 100:
+                            have_printed100 = True
 
                 skip_this_window = False
 
@@ -583,6 +600,9 @@ def main(raw_args=None):
                 if (end - start) < overlap_min_window_size:
                     skip_this_window = True
 
+                if debug:
+                    print("",f"skipThisWindow: {skip_this_window}",sep="\t")
+
                 if skip_this_window:
                     # skip window, save cpu time
                     start = next_start
@@ -603,6 +623,9 @@ def main(raw_args=None):
                                      mut_rate)
 
                 # insert variants
+                if debug:
+                    print(f"\tinserting variants.  prev({len(vars_from_prev_overlap)}), inwindow({len(vars_in_window)})")
+
                 sequences.insert_mutations(vars_from_prev_overlap + vars_in_window)
                 all_inserted_variants = sequences.random_mutations()
 
@@ -651,10 +674,16 @@ def main(raw_args=None):
                     # if coverage is so low such that no reads are to be sampled, skip region
                     #      (i.e., remove buffer of +1 reads we add to every window)
                     if reads_to_sample == 1 and sum(coverage_dat[2]) < low_cov_thresh:
-                        print("Warning: dropping region due to low coverage")
+                        print("","WARNING: dropping region due to low coverage",sep="\t")
                         reads_to_sample = 0
 
                     # sample reads
+                    if debug:
+                        for si,seq in enumerate(sequences.sequences):
+                            print("",f"Sequence-Ploid-{si}-len",len(seq),sep="\t")
+                        for bli,bl in enumerate(sequences.black_list):
+                            print("",f"Sequence-black-list-{bli}",len(np.nonzero(bl)[0]),sep="\t")
+                        
                     for k in range(reads_to_sample):
 
                         is_unmapped = []
@@ -703,6 +732,7 @@ def main(raw_args=None):
                                 bisect.bisect(discard_regions[ref_index[chrom][0]], n[0] + len(n[2])) % 2 for n in
                                 my_read_data]
                         if len(outside_boundaries) and any(outside_boundaries):
+                            print("WARNING: outside boundaries - skipping")
                             continue
 
                         # fastq read id name
@@ -850,11 +880,16 @@ def main(raw_args=None):
                 start = next_start
                 end = next_end
                 if is_last_time:
+                    if debug:
+                        print("","WARNING: skipping window",sep="\t")
                     break
                 if end >= final_position:
                     is_last_time = True
+                    if debug:
+                        print("","WARNING: end:{end} > finalPosition:{final_position}, isLastTime:{is_last_time}",sep="\t")
 
-        print(']', flush=True)
+        if not debug:
+            print(']', flush=True)
 
         if only_vcf:
             print('VCF generation completed in ', end='')
