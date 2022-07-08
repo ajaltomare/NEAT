@@ -534,12 +534,14 @@ class SequenceContainer:
                 if event_pos + len(my_indel[1]) >= self.seq_len - self.win_buffer - 1:
                     skip_event = True
                 if skip_event:
+                    print("warning - skipping event")
                     continue
                 for p in which_ploid:
                     for k in range(event_pos, event_pos + in_len + 1):
                         if self.black_list[p][k]:
                             skip_event = True
                 if skip_event:
+                    print("warning - skipping event")
                     continue
 
                 for p in which_ploid:
@@ -590,6 +592,11 @@ class SequenceContainer:
         for p in range(len(all_snps)):
             all_snps[p].extend(self.snp_list[p])
             all_snps[p] = [n for n in all_snps[p] if self.black_list[p][n[0]] != 1]
+            
+            # debug print
+            #for n in all_snps[p]:
+            #    if self.black_list[p][n[0]] == 1:
+            #        print("warning - skipping SNP due to blacklist")
 
         # MODIFY REFERENCE STRING: SNPS
         for i in range(len(all_snps)):
