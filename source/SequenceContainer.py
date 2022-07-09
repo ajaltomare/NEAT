@@ -645,7 +645,8 @@ class SequenceContainer:
                         # OOB issue
                         if v_pos+1 > len(temp_symbol_list):
                             print("ERROR INSERTING deletion",all_indels_ins[i][j],indel_length,v_pos+1,len(temp_symbol_list),sep="\t")
-                        temp_symbol_list[v_pos + 1] = "D" * abs(indel_length) + "M"
+                        else:
+                            temp_symbol_list[v_pos + 1] = "D" * abs(indel_length) + "M"
 
             # pre-compute cigar strings
             for j in range(len(temp_symbol_list) - self.read_len):
