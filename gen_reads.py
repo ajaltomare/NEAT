@@ -539,7 +539,7 @@ def main(raw_args=None):
                         v_index_from_prev = j
                     if variants_position >= end:
                         if debug:
-                            print("",f"found all overlapping variants - stopping - j:{j}, pos:{variants_position} >= end:{end}",sep="\t")
+                            print("",f"found all overlapping variants - stopping - v:{v_index_from_prev}-j:{j}, pos:{variants_position} >= end:{end}",sep="\t")
                         break
 
                 next_start = end - overlap
