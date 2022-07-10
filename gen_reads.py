@@ -510,7 +510,7 @@ def main(raw_args=None):
             
             # if for some reason our region is too small to process, skip it! (sorry)
             if number_target_windows == 1 and (final_position - initial_position) < overlap_min_window_size:
-                print('ELEMBIO: skipping region due to small window size (the sorry region)')
+                print('ERROR: skipping region ({initial_position}-{final_position} //  {final_position}-{initial_position} < {overlap_min_window_size}) due to small window size (the sorry region)')
                 continue
 
             start = initial_position
