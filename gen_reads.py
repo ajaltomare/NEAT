@@ -508,10 +508,11 @@ def main(raw_args=None):
                 print("REGIONS",initial_position, final_position,sep="\t")
                 print("",f"numTargetRegions: {number_target_windows}, basePairDistance: {base_pair_distance}", sep="\t")
             
+            # why are small regions not supported?
             # if for some reason our region is too small to process, skip it! (sorry)
-            if number_target_windows == 1 and (final_position - initial_position) < overlap_min_window_size:
-                print('ERROR: skipping region ({initial_position}-{final_position} //  {final_position}-{initial_position} < {overlap_min_window_size}) due to small window size (the sorry region)')
-                continue
+            #if number_target_windows == 1 and (final_position - initial_position) < overlap_min_window_size:
+            #    print('ERROR: skipping region ({initial_position}-{final_position} //  {final_position}-{initial_position} < {overlap_min_window_size}) due to small window size (the sorry region)')
+            #    continue
 
             start = initial_position
             end = min([start + base_pair_distance, final_position])
