@@ -144,8 +144,12 @@ def main(raw_args=None):
 
     debug = args.d
 
+    if debug:
+        print(f"fragment size: {fragment_size}")
+        print(f"read length: {read_len}")
+
     if fragment_size:
-        assert fragment_size > read_len, 'Variants may be skipped if mean fragment size is < read length'
+        assert fragment_size > read_len, f'Variants may be skipped if mean fragment size {fragment_size} is < read length {read_len}'
 
     """
     INPUT ERROR CHECKING
@@ -419,16 +423,9 @@ def main(raw_args=None):
     unmapped_records = []
 
     for chrom in range(len(ref_index)):
-
+        
         # read in reference sequence and notate blocks of Ns
         (ref_sequence, n_regions) = read_ref(reference, ref_index[chrom], n_handling)
-
-        # count total bp we'll be spanning so we can get an idea of how far along we are
-        # (for printing progress indicators)
-        total_bp_span = sum([n[1] - n[0] for n in n_regions['non_N']])
-        current_progress = 0
-        current_percent = 0
-        have_printed100 = False
 
         """Prune invalid input variants, e.g variants that:
                 - try to delete or alter any N characters
@@ -491,13 +488,16 @@ def main(raw_args=None):
             print('generating mutated fasta...')
         else:
             print('sampling reads...')
+
         tt = time.time()
-        # start the progress bar
-        if not debug:
-            print("[", end='', flush=True)
 
         buffer_added = 0
+        window_index = 0
+
         # Applying variants to non-N regions
+        if debug:
+            print(f"chr:{out_prefix}, non_N: {len(n_regions['non_N'])}",sep="\t")
+
         for i in range(len(n_regions['non_N'])):
             (initial_position, final_position) = n_regions['non_N'][i]
             
@@ -510,9 +510,9 @@ def main(raw_args=None):
             
             # why are small regions not supported?
             # if for some reason our region is too small to process, skip it! (sorry)
-            #if number_target_windows == 1 and (final_position - initial_position) < overlap_min_window_size:
-            #    print('ERROR: skipping region ({initial_position}-{final_position} //  {final_position}-{initial_position} < {overlap_min_window_size}) due to small window size (the sorry region)')
-            #    continue
+            if number_target_windows == 1 and (final_position - initial_position) < overlap_min_window_size:
+                print(f'ERROR: skipping region ({initial_position}-{final_position} //  {final_position}-{initial_position} < {overlap_min_window_size}) due to small window size (the sorry region)')
+                continue
 
             start = initial_position
             end = min([start + base_pair_distance, final_position])
@@ -526,8 +526,8 @@ def main(raw_args=None):
                 vars_in_window = []
                 updated = False
 
-                if debug:
-                    print(f"PROCESSING WINDOW: [{v_index_from_prev}] - {(start, end)}]",sep="\t")
+                print(f"PROCESSING WINDOW: {out_prefix} - {i}:{window_index} - [{v_index_from_prev}:{len(valid_variants_from_vcf)}] - {(start, end)}",sep="\t")
+                window_index +=1 
 
                 for j in range(v_index_from_prev, len(valid_variants_from_vcf)):
                     variants_position = valid_variants_from_vcf[j][0]
@@ -556,17 +556,6 @@ def main(raw_args=None):
                 if debug:
                     print("",f"vars_in_window: {len(vars_in_window)}",sep="\t")
                     print("",f"next: {(next_start, next_end)}, isLastTime: {is_last_time}",sep="\t")
-
-                if not debug:
-                    current_progress += end - start
-                    new_percent = int((current_progress * 100) / float(total_bp_span))
-                    if new_percent > current_percent:
-                        if new_percent <= 99 or (new_percent == 100 and not have_printed100):
-                            if new_percent % 5 == 1:
-                                print('-', end='', flush=True)
-                        current_percent = new_percent
-                        if current_percent == 100:
-                            have_printed100 = True
 
                 skip_this_window = False
 
@@ -888,9 +877,6 @@ def main(raw_args=None):
                     is_last_time = True
                     if debug:
                         print("","WARNING: end:{end} > finalPosition:{final_position}, isLastTime:{is_last_time}",sep="\t")
-
-        if not debug:
-            print(']', flush=True)
 
         if only_vcf:
             print('VCF generation completed in ', end='')
