@@ -22,6 +22,7 @@ import pathlib
 import pysam
 from functools import reduce
 import gzip
+from tqdm import tqdm
 
 # enables import from neighboring package
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
@@ -29,7 +30,9 @@ sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 from source.probability import DiscreteDistribution
 
 
-def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
+def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff, outdir):
+    input_name = pathlib.Path(input_file).stem
+
     # init smooth is set to zero and never touched again. Not sure what they were trying to do here.
     init_smooth = 0.
     # Prob_smooth is set to zero and never touched again. Not sure what they were trying to do here, either.
@@ -56,6 +59,8 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
         print("Check input file. Must be fastq, gzipped fastq, or bam/sam file.")
         sys.exit(1)
 
+    n_records_processed = 0
+
     actual_readlen = 0
     q_dict = {}
     current_line = 0
@@ -66,39 +71,44 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
     else:
         g = f
 
-    for read in g:
+    for read in (prog_bar := tqdm(g, total=lines_to_read)):
+        prog_bar.set_description('Counting quality bins')
+
         if is_aligned:
             qualities_to_check = read.query_alignment_qualities
         else:
             qualities_to_check = read.get_quality_array()
         if actual_readlen == 0:
-            actual_readlen = len(qualities_to_check) - 1
-            print('assuming read length is uniform...')
-            print('detected read length (from first read found):', actual_readlen)
+            actual_readlen = len(qualities_to_check)
+            # print('assuming read length is uniform...')
+            # print('detected read length (from first read found):', actual_readlen)
             prior_q = np.zeros([actual_readlen, real_q])
             total_q = [None] + [np.zeros([real_q, real_q]) for n in range(actual_readlen - 1)]
 
         # sanity-check readlengths
-        if len(qualities_to_check) - 1 != actual_readlen:
-            print('skipping read with unexpected length...')
+        if len(qualities_to_check) != actual_readlen:
+            # print('skipping read with unexpected length...')
             continue
+
+        n_records_processed += 1
 
         for i in range(actual_readlen):
             q = qualities_to_check[i]
             q_dict[q] = True
-            prev_q = q
             if i == 0:
                 prior_q[i][q] += 1
             else:
                 total_q[i][prev_q, q] += 1
                 prior_q[i][q] += 1
+            prev_q = q
 
         current_line += 1
-        if current_line % quarters == 0:
-            print(f'{(current_line/lines_to_read)*100:.0f}%')
+        # if current_line % quarters == 0:
+        #     print(f'{(current_line/lines_to_read)*100:.0f}%')
         if 0 < max_reads <= current_line:
             break
 
+    print('Kept', n_records_processed, 'reads out of', lines_to_read)
     f.close()
 
     # some sanity checking again...
@@ -110,7 +120,10 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
         print('\nError: Read in Q-scores above specified maximum:', q_range[1], '>', real_q, '\n')
         exit(1)
 
-    print('computing probabilities...')
+    print('Min Q:', q_range[0])
+    print('Max Q:', q_range[1])
+    print('Computing probabilities...')
+
     prob_q = [None] + [[[0. for m in range(real_q)] for n in range(real_q)] for p in range(actual_readlen - 1)]
     for p in range(1, actual_readlen):
         for i in range(real_q):
@@ -135,66 +148,53 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
     if plot_stuff:
         mpl.rcParams.update({'font.size': 14, 'font.weight': 'bold', 'lines.linewidth': 3})
 
-        mpl.figure(1)
+        fig = mpl.figure(1)
+        fig.clf()
         Z = np.array(init_q).T
         X, Y = np.meshgrid(range(0, len(Z[0]) + 1), range(0, len(Z) + 1))
         mpl.pcolormesh(X, Y, Z, vmin=0., vmax=0.25)
         mpl.axis([0, len(Z[0]), 0, len(Z)])
         mpl.yticks(range(0, len(Z), 10), range(0, len(Z), 10))
-        mpl.xticks(range(0, len(Z[0]), 10), range(0, len(Z[0]), 10))
+        mpl.xticks(range(0, len(Z[0]), 20), range(0, len(Z[0]), 20))
         mpl.xlabel('Read Position')
         mpl.ylabel('Quality Score')
         mpl.title('Q-Score Prior Probabilities')
         mpl.colorbar()
 
-        mpl.show()
+        mpl.savefig(outdir / f'{input_name}-priors.png')
 
         v_min_log = [-4, 0]
         min_val = 10 ** v_min_log[0]
         q_labels = [str(n) for n in range(q_range[0], q_range[1] + 1) if n % 5 == 0]
-        print(q_labels)
         q_ticks_x = [int(n) + 0.5 for n in q_labels]
         q_ticks_y = [(real_q - int(n)) - 0.5 for n in q_labels]
 
-        for p in range(1, actual_readlen, 10):
+        for p in range(9, actual_readlen, 10):
             current_data = np.array(prob_q[p])
             for i in range(len(current_data)):
                 for j in range(len(current_data[i])):
                     current_data[i][j] = max(min_val, current_data[i][j])
 
-            # matrix indices:		pcolormesh plotting:	plot labels and axes:
-            #
-            #      y				   ^					   ^
-            #	   -->				 x |					 y |
-            #  x |					    -->					    -->
-            #    v 					    y					    x
-            #
-            # to plot a MxN matrix 'Z' with rowNames and colNames we need to:
-            #
-            # pcolormesh(X,Y,Z[::-1,:])		# invert x-axis
-            # # swap x/y axis parameters and labels, remember x is still inverted:
-            # xlim([yMin,yMax])
-            # ylim([M-xMax,M-xMin])
-            # xticks()
-            #
+            fig = mpl.figure(p + 2)
+            fig.clf()
 
-            mpl.figure(p + 1)
             z = np.log10(current_data)
-            x, y = np.meshgrid(range(0, len(Z[0]) + 1), range(0, len(Z) + 1))
+            x, y = np.meshgrid(range(0, len(Z) + 1), range(0, len(Z) + 1))
             mpl.pcolormesh(x, y, z[::-1, :], vmin=v_min_log[0], vmax=v_min_log[1], cmap='jet')
             mpl.xlim([q_range[0], q_range[1] + 1])
             mpl.ylim([real_q - q_range[1] - 1, real_q - q_range[0]])
             mpl.yticks(q_ticks_y, q_labels)
             mpl.xticks(q_ticks_x, q_labels)
-            mpl.xlabel('\n' + r'$Q_{i+1}$')
+            mpl.xlabel(r'$Q_{i+1}$')
             mpl.ylabel(r'$Q_i$')
-            mpl.title('Q-Score Transition Frequencies [Read Pos:' + str(p) + ']')
+            mpl.title('Q-Score Transition Frequencies [Cycle:' + str(p + 1) + ']')
             cb = mpl.colorbar()
             cb.set_ticks([-4, -3, -2, -1, 0])
             cb.set_ticklabels([r'$10^{-4}$', r'$10^{-3}$', r'$10^{-2}$', r'$10^{-1}$', r'$10^{0}$'])
+            mpl.gca().invert_yaxis()
 
         # mpl.tight_layout()
-        mpl.show()
+            mpl.savefig(outdir / f'{input_name}-likelihood-C{p+1}-.png')
 
     print('estimating average error rate via simulation...')
     q_scores = range(real_q)
@@ -217,8 +217,8 @@ def parse_file(input_file, real_q, off_q, max_reads, n_samp, plot_stuff):
     lines_to_sample = len(range(1, n_samp + 1))
     samp_quarters = lines_to_sample // 4
     for samp in range(1, n_samp + 1):
-        if samp % samp_quarters == 0:
-            print(f'{(samp/lines_to_sample)*100:.0f}%')
+        # if samp % samp_quarters == 0:
+        #     print(f'{(samp/lines_to_sample)*100:.0f}%')
         my_q = init_dist_by_pos[0].sample()
         count_dict[my_q] += 1
         for i in range(1, len(init_q)):
@@ -261,11 +261,13 @@ def main():
     plot_stuff = args.plot
 
     q_scores = range(real_q)
+
+    outdir = pathlib.Path(outfile).parent
     if infile2 is None:
-        (init_q, prob_q, avg_err) = parse_file(infile, real_q, off_q, max_reads, n_samp, plot_stuff)
+        (init_q, prob_q, avg_err) = parse_file(infile, real_q, off_q, max_reads, n_samp, plot_stuff, outdir)
     else:
-        (init_q, prob_q, avg_err1) = parse_file(infile, real_q, off_q, max_reads, n_samp, plot_stuff)
-        (init_q2, prob_q2, avg_err2) = parse_file(infile2, real_q, off_q, max_reads, n_samp, plot_stuff)
+        (init_q, prob_q, avg_err1) = parse_file(infile, real_q, off_q, max_reads, n_samp, plot_stuff, outdir)
+        (init_q2, prob_q2, avg_err2) = parse_file(infile2, real_q, off_q, max_reads, n_samp, plot_stuff, outdir)
         avg_err = (avg_err1 + avg_err2) / 2.
 
     #
@@ -276,10 +278,23 @@ def main():
         print('Using default sequencing error parameters...')
 
         # sequencing substitution transition probabilities
-        sse_prob = [[0., 0.4918, 0.3377, 0.1705],
-                    [0.5238, 0., 0.2661, 0.2101],
-                    [0.3754, 0.2355, 0., 0.3890],
-                    [0.2505, 0.2552, 0.4942, 0.]]
+        # sse_prob = [[0., 0.4918, 0.3377, 0.1705],
+        #             [0.5238, 0., 0.2661, 0.2101],
+        #             [0.3754, 0.2355, 0., 0.3890],
+        #             [0.2505, 0.2552, 0.4942, 0.]]
+
+        ### ELEMBIO Human R1 ###
+        sse_prob = [[0., 0.32937874, 0.40685951, 0.26376175],
+                    [0.64271051, 0., 0.16638724, 0.19090225],
+                    [0.20582221, 0.10879305, 0., 0.68538474],
+                    [0.25865939, 0.25212314, 0.48921747, 0.]]
+
+        ### ELEMBIO Human R2 ###
+        # sse_prob = [[0., 0.29899702, 0.35289931, 0.34810368],
+        #             [0.58083515, 0., 0.16965342, 0.24951143],
+        #             [0.32090527, 0.16594355, 0., 0.51315118],
+        #             [0.40784685, 0.22104045, 0.3711127, 0.]]
+
         # if a sequencing error occurs, what are the odds it's an indel?
         sie_rate = 0.01
         # sequencing indel error length distribution
